@@ -1,0 +1,31 @@
+{
+  "name": "nextround-api",
+  "version": "0.1.0",
+  "description": "NextRound API — interview rooms, invite tokens, and Jitsi JWT minting.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "db:up": "docker-compose up -d postgres",
+    "db:down": "docker-compose down",
+    "migrate": "node-pg-migrate --envPath .env",
+    "seed": "node seed/dev.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@clerk/express": "^2.1.39",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "node-pg-migrate": "^8.0.4"
+  },
+  "license": "UNLICENSED"
+}

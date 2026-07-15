@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>New interview — NextRound</title>
+<style>
+  :root { --bg:#fff; --fg:#202124; --muted:#5f6368; --line:#dadce0; --blue:#1a73e8; --soft:#f1f3f4; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#202124; --fg:#e8eaed; --muted:#9aa0a6; --line:#3c4043; --soft:#303134; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,-apple-system,sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:2.5rem 1rem; }
+  h1 { font-size:1.6rem; margin:0 0 .25rem; }
+  .sub { color:var(--muted); margin:0 0 2rem; }
+  label { display:block; font-weight:600; font-size:.9rem; margin:1.2rem 0 .35rem; }
+  select, input { width:100%; padding:.7rem .75rem; font:inherit; color:var(--fg);
+                  background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  button { margin-top:1.75rem; width:100%; padding:.85rem; font-size:1rem; font-weight:600;
+           border:0; border-radius:8px; background:var(--blue); color:#fff; cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:not-allowed; }
+  .plan { background:var(--soft); border-radius:10px; padding:.9rem 1rem; margin-top:.75rem; font-size:.9rem; }
+  .plan ol { margin:.4rem 0 0; padding-left:1.2rem; }
+  .plan .tag { color:var(--muted); font-size:.8rem; }
+  .result { margin-top:2rem; border:1px solid var(--line); border-radius:10px; padding:1rem; display:none; }
+  .result.on { display:block; }
+  .result code { display:block; background:var(--soft); padding:.7rem; border-radius:6px;
+                 word-break:break-all; font-size:.85rem; margin-top:.5rem; }
+  .hint { color:var(--muted); font-size:.85rem; margin-top:.5rem; }
+  #err { color:#ea4335; margin-top:1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>New interview</h1>
+  <p class="sub">Pick a role and a candidate. The question plan is frozen onto the interview at creation.</p>
+
+  <label for="role">Role</label>
+  <select id="role"><option>Loading…</option></select>
+  <div class="plan" id="plan">Select a role to see its question plan.</div>
+
+  <label for="candidate">Candidate</label>
+  <select id="candidate"><option>Loading…</option></select>
+
+  <label for="when">Scheduled for</label>
+  <input type="datetime-local" id="when" />
+
+  <button id="create" disabled>Create room &amp; invite link</button>
+  <div id="err" role="alert"></div>
+
+  <div class="result" id="result">
+    <b>Room created.</b>
+    <div class="hint">Jitsi room: <span id="room"></span></div>
+    <div class="hint" style="margin-top:.75rem">Send this link to the candidate. It is shown once.</div>
+    <code id="joinUrl"></code>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const j = async (url, opts) => {
+    const res = await fetch(url, opts);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+    return body;
+  };
+
+  let roles = [];
+
+  async function loadRoles() {
+    const { roles: list } = await j('/api/roles');
+    roles = list;
+    $('role').innerHTML = list
+      .map((r) => `<option value="${r.id}">${r.title} — ${r.question_count} questions</option>`)
+      .join('');
+    await showPlan();
+  }
+
+  async function showPlan() {
+    const id = $('role').value;
+    if (!id) return;
+    const { questions } = await j(`/api/roles/${id}/template`);
+    $('plan').innerHTML =
+      '<b>Question plan</b><ol>' +
+      questions.map((q) => `<li>${q.prompt} <span class="tag">${q.question_type}</span></li>`).join('') +
+      '</ol>';
+  }
+
+  async function loadCandidates() {
+    // Candidates are seeded for now; a real picker is its own story.
+    const { candidates } = await j('/api/candidates');
+    $('candidate').innerHTML = candidates
+      .map((c) => `<option value="${c.id}">${c.full_name} — ${c.headline ?? ''}</option>`)
+      .join('');
+  }
+
+  async function create() {
+    $('create').disabled = true;
+    $('err').textContent = '';
+    try {
+      const when = $('when').value ? new Date($('when').value).toISOString() : null;
+      const { interview } = await j('/api/interviews', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jobRoleId: $('role').value,
+          candidateId: $('candidate').value,
+          scheduledAt: when,
+        }),
+      });
+
+      const invite = await j(`/api/interviews/${interview.id}/invite`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      $('room').textContent = interview.room_name;
+      $('joinUrl').textContent = invite.joinUrl;
+      $('result').classList.add('on');
+    } catch (e) {
+      $('err').textContent = e.message;
+    } finally {
+      $('create').disabled = false;
+    }
+  }
+
+  $('role').addEventListener('change', showPlan);
+  $('create').addEventListener('click', create);
+
+  Promise.all([loadRoles(), loadCandidates()])
+    .then(() => { $('create').disabled = false; })
+    .catch((e) => { $('err').textContent = e.message; });
+})();
+</script>
+</body>
+</html>

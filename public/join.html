@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Join your interview — NextRound</title>
+<style>
+  :root { --bg:#fff; --fg:#202124; --muted:#5f6368; --line:#dadce0; --blue:#1a73e8; --green:#34a853; --red:#ea4335; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#202124; --fg:#e8eaed; --muted:#9aa0a6; --line:#3c4043; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 2rem; }
+  .cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 2rem; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  video { width: 100%; aspect-ratio: 16/9; background:#000; border-radius: 12px; object-fit: cover; transform: scaleX(-1); }
+  .check { display:flex; gap:.75rem; align-items:flex-start; padding:.6rem 0; border-bottom:1px solid var(--line); }
+  .dot { width:10px; height:10px; border-radius:50%; margin-top:.5rem; flex:none; background:var(--muted); }
+  .dot.ok { background: var(--green); } .dot.bad { background: var(--red); }
+  .check b { display:block; font-weight:600; }
+  .check span { color: var(--muted); font-size:.9rem; }
+  .consent { border:1px solid var(--line); border-radius:12px; padding:1rem; margin:1.5rem 0; font-size:.92rem; color:var(--muted); }
+  .consent b { color: var(--fg); }
+  button { width:100%; padding:.85rem 1rem; font-size:1rem; font-weight:600; border:0; border-radius:8px;
+           background:var(--blue); color:#fff; cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:not-allowed; }
+  #err { color: var(--red); margin-top:1rem; min-height:1.5rem; }
+  #meet { position:fixed; inset:0; background:#000; display:none; z-index:10; }
+  #meet.on { display:block; }
+</style>
+</head>
+<body>
+<div class="wrap" id="lobby">
+  <h1 id="title">Join your interview</h1>
+  <p class="sub" id="subtitle">Checking your invite…</p>
+
+  <div class="cols">
+    <div>
+      <video id="preview" autoplay playsinline muted></video>
+    </div>
+    <div>
+      <div class="check"><div class="dot" id="d-cam"></div><div><b>Camera</b><span id="s-cam">Checking…</span></div></div>
+      <div class="check"><div class="dot" id="d-mic"></div><div><b>Microphone</b><span id="s-mic">Checking…</span></div></div>
+      <div class="check"><div class="dot" id="d-net"></div><div><b>Connection</b><span id="s-net">Checking…</span></div></div>
+
+      <div class="consent">
+        This session is <b>recorded</b> and checked for interview integrity (tab focus, paste,
+        and a second person). Nothing is shared outside the hiring team.
+        <b>By joining, you consent.</b>
+      </div>
+
+      <button id="join" disabled>Checking your invite…</button>
+      <div id="err" role="alert"></div>
+    </div>
+  </div>
+</div>
+<div id="meet"></div>
+
+<script>
+(function () {
+  // The token is the credential. It lives in the path; never log or forward it.
+  const token = decodeURIComponent(location.pathname.split('/join/')[1] || '');
+  const $ = (id) => document.getElementById(id);
+  const setCheck = (key, ok, text) => {
+    $('d-' + key).className = 'dot ' + (ok ? 'ok' : 'bad');
+    $('s-' + key).textContent = text;
+  };
+
+  let ctx = null;
+  let mediaOk = false;
+
+  async function loadContext() {
+    const res = await fetch('/api/join/' + encodeURIComponent(token));
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'This invite link is not valid.');
+    ctx = body;
+    $('title').textContent = `${ctx.roleTitle} interview`;
+    $('subtitle').textContent =
+      `Hi ${ctx.candidateName} — ${ctx.questionCount} questions. Check your setup, then join.`;
+  }
+
+  async function checkDevices() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      $('preview').srcObject = stream;
+      const cam = stream.getVideoTracks()[0];
+      const mic = stream.getAudioTracks()[0];
+      setCheck('cam', !!cam, cam ? cam.label || 'Camera ready' : 'No camera found');
+      setCheck('mic', !!mic, mic ? mic.label || 'Microphone ready' : 'No microphone found');
+      mediaOk = !!cam && !!mic;
+    } catch (e) {
+      setCheck('cam', false, 'Permission denied');
+      setCheck('mic', false, 'Permission denied');
+      mediaOk = false;
+    }
+    setCheck('net', navigator.onLine, navigator.onLine ? 'Online' : 'Offline');
+  }
+
+  function enableJoin() {
+    const ready = ctx && mediaOk;
+    $('join').disabled = !ready;
+    $('join').textContent = ready
+      ? "I'm ready — join interview"
+      : (ctx ? 'Allow camera and microphone to continue' : 'Invite unavailable');
+  }
+
+  // Click 2 of 2 (NFR-2): consent and join in the same action.
+  async function join() {
+    $('join').disabled = true;
+    $('join').textContent = 'Joining…';
+    try {
+      const res = await fetch('/api/join/' + encodeURIComponent(token), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ consent: true }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not join.');
+
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = `https://${body.domain}/external_api.js`;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('Could not reach the video server.'));
+        document.head.appendChild(s);
+      });
+
+      $('lobby').style.display = 'none';
+      $('meet').classList.add('on');
+      new window.JitsiMeetExternalAPI(body.domain, {
+        roomName: body.roomName,
+        jwt: body.jwt,
+        parentNode: $('meet'),
+        userInfo: { displayName: ctx.candidateName },
+        configOverwrite: { prejoinConfig: { enabled: false } },
+      });
+    } catch (e) {
+      $('err').textContent = e.message;
+      $('join').disabled = false;
+      $('join').textContent = "I'm ready — join interview";
+    }
+  }
+
+  $('join').addEventListener('click', join);
+
+  loadContext()
+    .catch((e) => { $('subtitle').textContent = ''; $('err').textContent = e.message; })
+    .finally(() => checkDevices().finally(enableJoin));
+})();
+</script>
+</body>
+</html>
