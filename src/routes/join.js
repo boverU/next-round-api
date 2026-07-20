@@ -4,6 +4,7 @@ const { z } = require('zod');
 const { pool } = require('../db/pool');
 const { resolveInvite, REASON_STATUS, REASON_MESSAGE } = require('../services/resolveInvite');
 const { mintJitsiJwt } = require('../lib/jitsiJwt');
+const { mintEventsToken } = require('../lib/eventsToken');
 const config = require('../config');
 
 const publicRouter = express.Router(); // GET /join/:token  — the lobby page
@@ -99,6 +100,15 @@ apiRouter.post('/:token', async (req, res, next) => {
       },
       moderator: false,
       features: {}, // candidates can never record, stream, or transcribe
+      // The invite-joiner is the person we track for integrity. Hand the meeting
+      // frontend a candidate-scoped events token so it can report tab focus,
+      // paste, and shortcuts back to us.
+      nextround: {
+        interviewId: invite.interview_id,
+        role: 'candidate',
+        apiBase: config.PUBLIC_BASE_URL,
+        eventsToken: mintEventsToken({ interviewId: invite.interview_id, role: 'candidate' }),
+      },
     });
 
     return res.json({ domain: config.JITSI_DOMAIN, roomName: invite.room_name, jwt: token });

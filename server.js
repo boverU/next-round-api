@@ -50,6 +50,8 @@ app.use('/api/roles', require('./src/routes/roles'));
 app.use('/api/candidates', require('./src/routes/candidates'));
 app.use('/api/interviews', require('./src/routes/interviews'));
 app.use('/api/interviews', require('./src/routes/invites'));
+// Anti-cheat event channel (candidate POSTs, staff read + SSE stream).
+app.use('/api/interviews', require('./src/routes/events'));
 app.use('/api/rooms', require('./src/routes/rooms'));
 app.use('/api/join', require('./src/routes/join').apiRouter);
 // Called by Prosody, not by a browser. Must be reachable from the Jitsi network.

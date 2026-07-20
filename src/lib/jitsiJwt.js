@@ -14,7 +14,7 @@ const NO_FEATURES = {
  * The `room` claim pins the token to exactly one conference, so a leaked token
  * cannot roam. Prosody verifies the HS256 signature against JWT_APP_SECRET.
  */
-function mintJitsiJwt({ roomName, user, moderator = false, features = {} }) {
+function mintJitsiJwt({ roomName, user, moderator = false, features = {}, nextround }) {
   if (!roomName) throw new Error('mintJitsiJwt requires a roomName');
 
   const payload = {
@@ -30,6 +30,10 @@ function mintJitsiJwt({ roomName, user, moderator = false, features = {} }) {
         moderator: Boolean(moderator),
       },
       features: { ...NO_FEATURES, ...features },
+      // App-specific sidecar Prosody ignores. Lets the meeting frontend know it
+      // is inside a NextRound interview, who it is, and where to send anti-cheat
+      // telemetry — all without a second call back to us.
+      ...(nextround ? { nextround } : {}),
     },
   };
 

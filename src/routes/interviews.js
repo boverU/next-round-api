@@ -4,6 +4,7 @@ const { pool } = require('../db/pool');
 const { requireStaff } = require('../auth/clerk');
 const { createInterview } = require('../services/createInterview');
 const { mintJitsiJwt } = require('../lib/jitsiJwt');
+const { mintEventsToken } = require('../lib/eventsToken');
 const config = require('../config');
 
 const router = express.Router();
@@ -80,6 +81,14 @@ router.post('/:id/join', requireStaff, async (req, res, next) => {
       user: { id: req.staff.id, name: req.staff.name, email: req.staff.email },
       moderator: isModerator,
       features: { recording: isModerator, transcription: isModerator },
+      // A staff-scoped token lets the interviewer watch the candidate's events
+      // live from inside the call, without a separate Clerk round-trip.
+      nextround: {
+        interviewId: req.params.id,
+        role: 'staff',
+        apiBase: config.PUBLIC_BASE_URL,
+        eventsToken: mintEventsToken({ interviewId: req.params.id, role: 'staff' }),
+      },
     });
 
     return res.json({ domain: config.JITSI_DOMAIN, roomName, jwt: token });

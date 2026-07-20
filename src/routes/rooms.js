@@ -3,7 +3,19 @@ const express = require('express');
 const { pool } = require('../db/pool');
 const { requireStaff } = require('../auth/clerk');
 const { mintJitsiJwt } = require('../lib/jitsiJwt');
+const { mintEventsToken } = require('../lib/eventsToken');
 const config = require('../config');
+
+// Reused by every mint site here so the meeting frontend always knows which
+// interview it is in and where to send (or read) anti-cheat telemetry.
+function nextroundContext(interviewId, role) {
+  return {
+    interviewId,
+    role,
+    apiBase: config.PUBLIC_BASE_URL,
+    eventsToken: mintEventsToken({ interviewId, role }),
+  };
+}
 
 const router = express.Router();
 
@@ -20,12 +32,13 @@ const EMPTY_SNAPSHOT = { role_title: null, questions: [], criteria: [] };
 
 const MOD_FEATURES = { recording: true, transcription: true };
 
-function mintFor(staff, roomName) {
+function mintFor(staff, roomName, interviewId) {
   return mintJitsiJwt({
     roomName,
     user: { id: staff.id, name: staff.name, email: staff.email },
     moderator: true,
     features: MOD_FEATURES,
+    nextround: nextroundContext(interviewId, 'staff'),
   });
 }
 
@@ -62,7 +75,7 @@ router.post('/instant', requireStaff, async (req, res, next) => {
     return res.status(201).json({
       id: room.id,
       roomName: room.room_name,
-      jwt: mintFor(req.staff, room.room_name),
+      jwt: mintFor(req.staff, room.room_name, room.id),
       domain: config.JITSI_DOMAIN,
     });
   } catch (err) {
@@ -77,7 +90,7 @@ router.post('/join', requireStaff, async (req, res, next) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT room_name, status FROM interview
+      `SELECT id, room_name, status FROM interview
        WHERE room_name = $1 AND org_id = $2 AND deleted_at IS NULL`,
       [code, req.staff.org_id]
     );
@@ -88,7 +101,7 @@ router.post('/join', requireStaff, async (req, res, next) => {
 
     return res.json({
       roomName: rows[0].room_name,
-      jwt: mintFor(req.staff, rows[0].room_name),
+      jwt: mintFor(req.staff, rows[0].room_name, rows[0].id),
       domain: config.JITSI_DOMAIN,
     });
   } catch (err) {
@@ -106,7 +119,7 @@ router.post('/guest-token', async (req, res, next) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT room_name, status FROM interview
+      `SELECT id, room_name, status FROM interview
        WHERE room_name = $1 AND deleted_at IS NULL`,
       [code]
     );
@@ -120,6 +133,8 @@ router.post('/guest-token', async (req, res, next) => {
       user: { id: `guest-${crypto.randomUUID()}`, name: 'Гость' },
       moderator: false,
       features: {},
+      // A shared-link guest is an unauthorized joiner too — track them.
+      nextround: nextroundContext(rows[0].id, 'candidate'),
     });
 
     return res.json({ roomName: rows[0].room_name, jwt: token, domain: config.JITSI_DOMAIN });
