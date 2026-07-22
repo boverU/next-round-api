@@ -14,7 +14,7 @@ const NO_FEATURES = {
  * The `room` claim pins the token to exactly one conference, so a leaked token
  * cannot roam. Prosody verifies the HS256 signature against JWT_APP_SECRET.
  */
-function mintJitsiJwt({ roomName, user, moderator = false, features = {}, nextround }) {
+function mintJitsiJwt({ roomName, user, moderator = false, features = {}, nextround, lobbyBypass = false }) {
   if (!roomName) throw new Error('mintJitsiJwt requires a roomName');
 
   const payload = {
@@ -28,6 +28,10 @@ function mintJitsiJwt({ roomName, user, moderator = false, features = {}, nextro
         name: user.name,
         email: user.email ?? undefined,
         moderator: Boolean(moderator),
+        // Read by Prosody's mod_token_lobby_bypass: grants member affiliation
+        // BEFORE the lobby gate, so the recorder joins a lobby-protected room.
+        // (moderator alone won't do it — token_affiliation skips when lobby is on.)
+        ...(lobbyBypass ? { lobby_bypass: true } : {}),
       },
       features: { ...NO_FEATURES, ...features },
       // App-specific sidecar Prosody ignores. Lets the meeting frontend know it

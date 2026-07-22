@@ -182,8 +182,9 @@ router.post('/recorder-token', async (req, res, next) => {
     const token = mintJitsiJwt({
       roomName: rows[0].room_name,
       user: { id: `recorder-${crypto.randomUUID()}`, name: 'Recorder' },
-      moderator: true, // bypasses the lobby so Jibri can join unattended
+      moderator: true,
       features: { recording: true },
+      lobbyBypass: true, // grants member affiliation before the lobby gate
     });
 
     return res.json({ roomName: rows[0].room_name, jwt: token, domain: config.JITSI_DOMAIN });
