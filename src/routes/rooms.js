@@ -177,12 +177,13 @@ router.post('/recorder-token', async (req, res, next) => {
       return res.status(403).json({ error: 'This meeting is closed' });
     }
 
+    // No `nextround` context: the recorder is not a tracked participant and does
+    // not post anti-cheat events (mintEventsToken only accepts candidate|staff).
     const token = mintJitsiJwt({
       roomName: rows[0].room_name,
       user: { id: `recorder-${crypto.randomUUID()}`, name: 'Recorder' },
       moderator: true, // bypasses the lobby so Jibri can join unattended
       features: { recording: true },
-      nextround: nextroundContext(rows[0].id, 'recorder'),
     });
 
     return res.json({ roomName: rows[0].room_name, jwt: token, domain: config.JITSI_DOMAIN });
