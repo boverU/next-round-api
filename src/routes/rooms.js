@@ -143,4 +143,52 @@ router.post('/guest-token', async (req, res, next) => {
   }
 });
 
+// The Jibri recorder must BYPASS the lobby to capture a room, so unlike a
+// candidate guest it needs a MODERATOR token. This endpoint is locked to the
+// recording host's egress IP: nginx overwrites X-Real-IP with the real remote
+// address, so a browser anywhere else cannot mint a moderator token here.
+const RECORDER_IPS = new Set(
+  config.RECORDER_ALLOWED_IPS.split(',').map((s) => s.trim()).filter(Boolean)
+);
+
+function isFromRecorder(req) {
+  // Trust ONLY nginx's X-Real-IP ($remote_addr). X-Forwarded-For is appended
+  // from client-supplied input here, so it is not safe for an allowlist check.
+  const ip = String(req.headers['x-real-ip'] || '').trim();
+  return ip !== '' && RECORDER_IPS.has(ip);
+}
+
+// PRIVATE (recorder host only): mint a short-lived MODERATOR token so Jibri can
+// join a lobby-protected room unattended and record it.
+router.post('/recorder-token', async (req, res, next) => {
+  if (!isFromRecorder(req)) return res.status(403).json({ error: 'Forbidden' });
+
+  const code = String(req.body?.code ?? '').trim().toLowerCase();
+  if (!code) return res.status(400).json({ error: 'Missing meeting code' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, room_name, status FROM interview
+       WHERE room_name = $1 AND deleted_at IS NULL`,
+      [code]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Meeting not found' });
+    if (rows[0].status === 'cancelled' || rows[0].status === 'completed') {
+      return res.status(403).json({ error: 'This meeting is closed' });
+    }
+
+    const token = mintJitsiJwt({
+      roomName: rows[0].room_name,
+      user: { id: `recorder-${crypto.randomUUID()}`, name: 'Recorder' },
+      moderator: true, // bypasses the lobby so Jibri can join unattended
+      features: { recording: true },
+      nextround: nextroundContext(rows[0].id, 'recorder'),
+    });
+
+    return res.json({ roomName: rows[0].room_name, jwt: token, domain: config.JITSI_DOMAIN });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 module.exports = router;
