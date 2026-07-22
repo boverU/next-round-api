@@ -32,6 +32,17 @@ const schema = z.object({
   // endpoint relies on network isolation alone.
   RESERVATION_SHARED_SECRET: z.string().optional(),
 
+  // Piston code-execution engine (internal service). The API proxies runs to it
+  // so candidate code never reaches the browser's origin directly and we can
+  // authorize + rate-limit each run.
+  PISTON_URL: z.string().url().default('http://piston:2000'),
+  // Per-interview run rate limit (max runs within the window).
+  CODE_EXEC_MAX_RUNS: z.coerce.number().default(20),
+  CODE_EXEC_WINDOW_SECONDS: z.coerce.number().default(60),
+  // Hard caps handed to Piston (ms / bytes) so a run can't hog the box.
+  CODE_EXEC_RUN_TIMEOUT_MS: z.coerce.number().default(10000),
+  CODE_EXEC_COMPILE_TIMEOUT_MS: z.coerce.number().default(10000),
+
   // Local-only escape hatch: skip Clerk and act as a seeded staff user.
   // Not z.coerce.boolean(): Boolean("0") is true, so DEV_AUTH_BYPASS=0 would
   // turn the bypass ON. Only an explicit "1" or "true" enables it.

@@ -52,6 +52,8 @@ app.use('/api/interviews', require('./src/routes/interviews'));
 app.use('/api/interviews', require('./src/routes/invites'));
 // Anti-cheat event channel (candidate POSTs, staff read + SSE stream).
 app.use('/api/interviews', require('./src/routes/events'));
+// Collaborative code editor: sandboxed run proxy to Piston (events-token auth).
+app.use('/api/interviews', require('./src/routes/execute'));
 app.use('/api/rooms', require('./src/routes/rooms'));
 app.use('/api/join', require('./src/routes/join').apiRouter);
 // Called by Prosody, not by a browser. Must be reachable from the Jitsi network.
