@@ -1,0 +1,50 @@
+name: build-api
+
+# Builds the NextRound API image on a native amd64 runner and pushes it to ghcr,
+# so the deploy box only pulls — no local cross-arch (QEMU) build. Mirrors the
+# jitsi-meet build-web workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+    paths:
+      - 'src/**'
+      - 'migrations/**'
+      - 'server.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - 'docker-entrypoint.sh'
+      - '.github/workflows/build-api.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/boveru/nextround-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

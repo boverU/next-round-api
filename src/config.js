@@ -32,6 +32,11 @@ const schema = z.object({
   // endpoint relies on network isolation alone.
   RESERVATION_SHARED_SECRET: z.string().optional(),
 
+  // Egress IP(s) of the Jibri recording host(s), comma-separated. Only requests
+  // whose nginx-set X-Real-IP matches may mint a MODERATOR recorder token (which
+  // bypasses the lobby). Empty = the recorder endpoint is disabled (403 for all).
+  RECORDER_ALLOWED_IPS: z.string().default(''),
+
   // Piston code-execution engine (internal service). The API proxies runs to it
   // so candidate code never reaches the browser's origin directly and we can
   // authorize + rate-limit each run.
