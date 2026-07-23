@@ -60,24 +60,36 @@ async function requireStaff(req, res, next) {
   try {
     const { userId, orgId } = getAuth(req);
     if (!userId) return res.status(401).json({ error: 'Not signed in' });
-    if (!orgId) {
-      // B2B: every interview belongs to an org, so a personal-account session
-      // has nowhere to put one.
-      return res.status(403).json({ error: 'Select an organization first' });
+
+    const clerkUser = await clerkClient.users.getUser(userId);
+    const email = clerkUser.primaryEmailAddress?.emailAddress ?? `${userId}@no-email.invalid`;
+    const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ')
+      || clerkUser.username || 'Unnamed';
+
+    if (orgId) {
+      // Team workspace (B2B): scope to the selected Clerk organization.
+      const clerkOrg = await clerkClient.organizations.getOrganization({ organizationId: orgId });
+
+      req.staff = await upsertStaff({
+        clerkUserId: userId,
+        clerkOrgId: orgId,
+        orgName: clerkOrg.name,
+        email,
+        name,
+      });
+    } else {
+      // Personal workspace (B2C): no team org selected, so the user IS their own
+      // single-member org. Interviews still foreign-key to a real organization
+      // row (keyed to the user), and the user can join or create a team org later
+      // with no migration.
+      req.staff = await upsertStaff({
+        clerkUserId: userId,
+        clerkOrgId: `personal:${userId}`,
+        orgName: name === 'Unnamed' ? 'Personal workspace' : `${name} (personal)`,
+        email,
+        name,
+      });
     }
-
-    const [clerkUser, clerkOrg] = await Promise.all([
-      clerkClient.users.getUser(userId),
-      clerkClient.organizations.getOrganization({ organizationId: orgId }),
-    ]);
-
-    req.staff = await upsertStaff({
-      clerkUserId: userId,
-      clerkOrgId: orgId,
-      orgName: clerkOrg.name,
-      email: clerkUser.primaryEmailAddress?.emailAddress ?? `${userId}@no-email.invalid`,
-      name: [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || clerkUser.username || 'Unnamed',
-    });
 
     return next();
   } catch (err) {
