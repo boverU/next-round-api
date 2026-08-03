@@ -44,16 +44,19 @@ function mintFor(staff, roomName, interviewId) {
 
 // US: "New meeting" — create an ad-hoc room and enter it as moderator.
 router.post('/instant', requireStaff, async (req, res, next) => {
+  // Optional: opt this instant room into AI screening at creation. Lets a
+  // "New meeting" (or a curl) turn on the bot without a separate call.
+  const aiScreening = req.body?.ai === true || req.body?.ai === 'true';
   try {
     let room;
     for (let attempt = 1; ; attempt += 1) {
       const roomName = meetCode();
       try {
         const { rows } = await pool.query(
-          `INSERT INTO interview (org_id, created_by, room_name, template_snapshot, status, started_at)
-           VALUES ($1, $2, $3, $4, 'live', now())
+          `INSERT INTO interview (org_id, created_by, room_name, template_snapshot, status, started_at, ai_screening_enabled)
+           VALUES ($1, $2, $3, $4, 'live', now(), $5)
            RETURNING id, room_name`,
-          [req.staff.org_id, req.staff.id, roomName, EMPTY_SNAPSHOT]
+          [req.staff.org_id, req.staff.id, roomName, EMPTY_SNAPSHOT, aiScreening]
         );
         room = rows[0];
         break;
@@ -184,6 +187,74 @@ router.post('/recorder-token', async (req, res, next) => {
       user: { id: `recorder-${crypto.randomUUID()}`, name: 'Recorder' },
       moderator: true,
       features: { recording: true },
+      lobbyBypass: true, // grants member affiliation before the lobby gate
+    });
+
+    return res.json({ roomName: rows[0].room_name, jwt: token, domain: config.JITSI_DOMAIN });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AI-recruiter bot (pull model). The launcher on the DO droplet polls
+// GET /ai-pending for live, opted-in interviews and, for each, calls
+// POST /bot-token to get a lobby-bypassing token, then joins as a participant.
+// Both endpoints are locked to the launcher's egress IP, exactly like the
+// recorder above. `BOT_ALLOWED_IPS` defaults to `RECORDER_ALLOWED_IPS` (same
+// droplet) when unset.
+// ---------------------------------------------------------------------------
+const BOT_IPS = new Set(
+  String(config.BOT_ALLOWED_IPS || '').split(',').map((s) => s.trim()).filter(Boolean)
+);
+
+function isFromBotHost(req) {
+  const ip = String(req.headers['x-real-ip'] || '').trim();
+  return ip !== '' && BOT_IPS.has(ip);
+}
+
+// PRIVATE (launcher host only): which rooms currently want a bot? A room
+// qualifies while its interview is live and opted into AI screening.
+router.get('/ai-pending', async (req, res, next) => {
+  if (!isFromBotHost(req)) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, room_name FROM interview
+       WHERE status = 'live' AND ai_screening_enabled = true AND deleted_at IS NULL
+       ORDER BY started_at ASC NULLS LAST`
+    );
+    return res.json(rows.map((r) => ({ id: r.id, room_name: r.room_name })));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PRIVATE (launcher host only): mint a token that lets the bot join a
+// lobby-protected room as a normal participant. lobby_bypass is what gets it
+// past the lobby (moderator not required); no `nextround` context, so the bot
+// is not tracked as a candidate/staff participant.
+router.post('/bot-token', async (req, res, next) => {
+  if (!isFromBotHost(req)) return res.status(403).json({ error: 'Forbidden' });
+
+  const code = String(req.body?.code ?? '').trim().toLowerCase();
+  if (!code) return res.status(400).json({ error: 'Missing meeting code' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, room_name, status FROM interview
+       WHERE room_name = $1 AND deleted_at IS NULL`,
+      [code]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Meeting not found' });
+    if (rows[0].status === 'cancelled' || rows[0].status === 'completed') {
+      return res.status(403).json({ error: 'This meeting is closed' });
+    }
+
+    const token = mintJitsiJwt({
+      roomName: rows[0].room_name,
+      user: { id: `bot-${crypto.randomUUID()}`, name: 'Aina' },
+      moderator: false,
+      features: {},
       lobbyBypass: true, // grants member affiliation before the lobby gate
     });
 

@@ -37,6 +37,12 @@ const schema = z.object({
   // bypasses the lobby). Empty = the recorder endpoint is disabled (403 for all).
   RECORDER_ALLOWED_IPS: z.string().default(''),
 
+  // Egress IP(s) of the AI-recruiter launcher host(s), comma-separated. Gates
+  // GET /api/rooms/ai-pending and POST /api/rooms/bot-token the same way the
+  // recorder is gated. Defaults to RECORDER_ALLOWED_IPS (same DO droplet) when
+  // unset; empty on both = the bot endpoints are disabled (403 for all).
+  BOT_ALLOWED_IPS: z.string().optional(),
+
   // Piston code-execution engine (internal service). The API proxies runs to it
   // so candidate code never reaches the browser's origin directly and we can
   // authorize + rate-limit each run.
@@ -76,6 +82,10 @@ if (!config.DEV_AUTH_BYPASS && !config.CLERK_SECRET_KEY) {
   console.error('FATAL: CLERK_SECRET_KEY is required unless DEV_AUTH_BYPASS=1.');
   process.exit(1);
 }
+
+// Bot launcher shares the recorder's droplet, so default its allowlist to the
+// recorder's when not set explicitly.
+if (config.BOT_ALLOWED_IPS === undefined) config.BOT_ALLOWED_IPS = config.RECORDER_ALLOWED_IPS;
 
 // The first audience is the one we stamp into minted tokens.
 config.jitsiAudience = config.JWT_ACCEPTED_AUDIENCES.split(',')[0].trim();
