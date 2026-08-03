@@ -8,12 +8,13 @@ const config = require('../config');
 
 // Reused by every mint site here so the meeting frontend always knows which
 // interview it is in and where to send (or read) anti-cheat telemetry.
-function nextroundContext(interviewId, role) {
+function nextroundContext(interviewId, role, extra) {
   return {
     interviewId,
     role,
     apiBase: config.PUBLIC_BASE_URL,
     eventsToken: mintEventsToken({ interviewId, role }),
+    ...(extra || {}),
   };
 }
 
@@ -86,6 +87,53 @@ router.post('/instant', requireStaff, async (req, res, next) => {
   }
 });
 
+// US: "Prescreening session" — staff creates an AI-only screening room and gets a
+// shareable candidate link. Created as `scheduled` (NOT live) so the bot joins
+// only once the candidate actually arrives (the reservation START handler flips
+// scheduled->live on first join, which is when it enters GET /ai-pending). The
+// typed requirements become the bot's per-session prompt context.
+router.post('/prescreening', requireStaff, async (req, res, next) => {
+  const requirements = String(req.body?.requirements ?? '').trim();
+  if (!requirements) return res.status(400).json({ error: 'Введите требования к позиции' });
+
+  const snapshot = { role_title: null, requirements, questions: [], criteria: [] };
+  try {
+    let room;
+    for (let attempt = 1; ; attempt += 1) {
+      const roomName = meetCode();
+      try {
+        const { rows } = await pool.query(
+          `INSERT INTO interview (org_id, created_by, room_name, template_snapshot, status, ai_screening_enabled)
+           VALUES ($1, $2, $3, $4, 'scheduled', true)
+           RETURNING id, room_name`,
+          [req.staff.org_id, req.staff.id, roomName, snapshot]
+        );
+        room = rows[0];
+        break;
+      } catch (err) {
+        if (err.code === '23505' && attempt < 3) continue; // room_name collision
+        throw err;
+      }
+    }
+
+    // Creator owns the session (for later dashboard/scoring), though they don't join.
+    await pool.query(
+      `INSERT INTO interview_panelist (interview_id, user_id, panel_role, is_moderator)
+       VALUES ($1, $2, 'lead', true)
+       ON CONFLICT (interview_id, user_id) DO NOTHING`,
+      [room.id, req.staff.id]
+    );
+
+    return res.status(201).json({
+      id: room.id,
+      roomName: room.room_name,
+      domain: config.JITSI_DOMAIN,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 // US: "Join with a code" — a staff member joins an existing room in their org.
 router.post('/join', requireStaff, async (req, res, next) => {
   const code = String(req.body?.code ?? '').trim().toLowerCase();
@@ -122,7 +170,7 @@ router.post('/guest-token', async (req, res, next) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT id, room_name, status FROM interview
+      `SELECT id, room_name, status, ai_screening_enabled FROM interview
        WHERE room_name = $1 AND deleted_at IS NULL`,
       [code]
     );
@@ -136,8 +184,14 @@ router.post('/guest-token', async (req, res, next) => {
       user: { id: `guest-${crypto.randomUUID()}`, name: 'Гость' },
       moderator: false,
       features: {},
-      // A shared-link guest is an unauthorized joiner too — track them.
-      nextround: nextroundContext(rows[0].id, 'candidate'),
+      // A shared-link guest is an unauthorized joiner too — track them. For an
+      // AI-screening room, flag it so the frontend shows the "Aina joins
+      // shortly" waiting screen until the bot is in the room.
+      nextround: nextroundContext(
+        rows[0].id,
+        'candidate',
+        rows[0].ai_screening_enabled ? { ai_screening: true } : undefined
+      ),
     });
 
     return res.json({ roomName: rows[0].room_name, jwt: token, domain: config.JITSI_DOMAIN });
@@ -219,11 +273,14 @@ router.get('/ai-pending', async (req, res, next) => {
   if (!isFromBotHost(req)) return res.status(403).json({ error: 'Forbidden' });
   try {
     const { rows } = await pool.query(
-      `SELECT id, room_name FROM interview
+      `SELECT id, room_name, template_snapshot->>'requirements' AS requirements
+       FROM interview
        WHERE status = 'live' AND ai_screening_enabled = true AND deleted_at IS NULL
        ORDER BY started_at ASC NULLS LAST`
     );
-    return res.json(rows.map((r) => ({ id: r.id, room_name: r.room_name })));
+    // `requirements` (from the prescreening modal) is the bot's per-session
+    // prompt context; null for legacy/instant AI rooms (bot uses its default).
+    return res.json(rows.map((r) => ({ id: r.id, room_name: r.room_name, requirements: r.requirements })));
   } catch (err) {
     return next(err);
   }
